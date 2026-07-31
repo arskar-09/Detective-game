@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>사건 수사: 기록된 충동</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body { background-color: #050505; color: #d1d5db; font-family: 'Courier New', Courier, monospace; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        #game-wrapper { display: flex; gap: 10px; position: relative; }
+        #game-container { width: 800px; display: flex; flex-direction: column; border: 2px solid #2a2f3d; box-shadow: 0 0 30px rgba(0, 240, 255, 0.1); position: relative; }
+        canvas { background-color: #12141c; display: block; }
+        #dialog-box { height: 180px; background: #0b0c10; border-top: 2px solid #2a2f3d; padding: 15px; overflow-y: auto; font-size: 14px; line-height: 1.6; }
+        .log-entry { margin-bottom: 8px; animation: fadeIn 0.3s; }
+        .log-thought { color: #94a3b8; font-style: italic; }
+        .log-warning { color: #ff3e3e; font-weight: bold; }
+        .log-system { color: #00f0ff; font-weight: bold; }
+        .log-day { color: #ff8c00; font-weight: bold; font-size: 16px; margin: 15px 0 5px 0;}
+        #side-panel { width: 260px; background: #0d0f14; border: 2px solid #2a2f3d; padding: 15px; display: flex; flex-direction: column; }
+        .panel-title { color: #8a94a6; font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #2a2f3d; padding-bottom: 5px; }
+        .clue-list { list-style: none; flex: 1; }
+        .clue-item { background: #181b24; padding: 8px; margin-bottom: 5px; border-left: 3px solid #00f0ff; font-size: 12px; color: #fff; animation: fadeIn 0.3s; }
+        #controls-info { margin-top: auto; background: #161922; padding: 10px; font-size: 12px; color: #8a94a6; border-radius: 4px; }
+        .key-badge { background: #2a2f3d; color: #fff; padding: 2px 6px; border-radius: 3px; font-weight: bold; }
+        
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 100; display: flex; justify-content: center; align-items: center; flex-direction: column; cursor: pointer; transition: opacity 1s; }
+        .title-text { font-size: 24px; color: #ff3e3e; margin-bottom: 20px; text-align: center; }
+        .desc-text { font-size: 14px; color: #8a94a6; animation: blink 1.5s infinite; }
+        
+        #ending-screen { display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: black; z-index: 200; justify-content: center; align-items: center; flex-direction: column; }
+        .final-title { font-size: 48px; color: #ff3e3e; letter-spacing: 10px; animation: scaleUp 2s forwards; }
+
+        #dialog-box::-webkit-scrollbar { width: 6px; }
+        #dialog-box::-webkit-scrollbar-track { background: #0b0c10; }
+        #dialog-box::-webkit-scrollbar-thumb { background: #2a2f3d; }
+        
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        @keyframes scaleUp { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div id="overlay" onclick="startGame()">
+        <div class="title-text">사건 수사 : 기록된 충동</div>
+        <div class="desc-text">화면을 클릭하여 수사를 시작하십시오.</div>
+    </div>
+    
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="500"></canvas>
+        <div id="dialog-box"></div>
+        <div id="ending-screen">
+            <div class="final-title">기록된 충동</div>
+        </div>
+    </div>
+    
+    <div id="side-panel">
+        <div class="panel-title">수집된 단서 (EVIDENCE)</div>
+        <ul class="clue-list" id="clue-list"></ul>
+        <div id="controls-info">
+            <p><strong>[조작법]</strong></p>
+            <p style="margin-top: 5px;"><span class="key-badge">방향키</span> : 이동</p>
+            <p style="margin-top: 5px;"><span class="key-badge">Space</span> : 조사 / 이동</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const dialogBox = document.getElementById('dialog-box');
+
+    const state = {
+        currentMap: 'livingRoom', clues: [],
+        flags: {
+            examinedBody: false, foundNote: false, foundKey: false, foundTruth: false,
+            examinedGuard: false, examinedBloodMap2: false, foundCasing: false, day2Cleared: false,
+            examinedBloodTrail: false, examinedCages: false, examinedLedger: false, examinedIcebox: false, examinedKiller: false, day3Cleared: false,
+            examinedFakeBody: false, examinedWitness: false, foundHiddenDoor: false, foundClones: false
+        }
+    };
+
+    const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, Space: false };
+    let spacePressed = false, isGameRunning = false;
+    const player = { x: 350, y: 350, w: 24, h: 32, speed: 5, color: '#00f0ff' };
+
+    const maps = {
+        // --- Day 1 (1일차) ---
+        livingRoom: [
+            { id: 'body', x: 350, y: 250, w: 90, h: 50, color: '#8b0000', label: "시체", condition: () => true,
+              interact: () => {
+                  log("피범벅이 된 아서 켄트의 시체다.");
+                  if (!state.flags.examinedBody) { state.flags.examinedBody = true; log("시체의 양 눈이 감겨 있고, 두 손은 배 위에 90도로 겹쳐져 있다. 기괴할 정도로 완벽한 대칭이다.", "warning"); }
+              }
+            },
+            { id: 'stairsUp', x: 50, y: 400, w: 60, h: 60, color: '#555555', label: "2층 계단", condition: () => true,
+              interact: () => { changeMap('day1_2F', 120, 400); log("2층 서재로 올라갑니다.", "system"); }
+            },
+            { id: 'coat', x: 100, y: 100, w: 40, h: 70, color: '#6d597a', label: "외투", condition: () => true,
+              interact: () => {
+                  if (state.flags.foundNote && !state.flags.foundKey) { state.flags.foundKey = true; log("2층에서 본 메모대로 외투 안주머니를 뒤지자 묵직한 지하실 열쇠가 나왔다!", "warning"); addClue("지하실 열쇠"); }
+                  else if (!state.flags.foundNote) { log("외투 주머니가 많아 일일이 뒤지기엔 시간이 없다. 단서가 더 필요하다.", "thought"); }
+              }
+            },
+            { id: 'basementDoor', x: 720, y: 100, w: 50, h: 90, color: '#3e2723', label: "지하실 문", condition: () => true,
+              interact: () => {
+                  if (state.flags.foundKey) { log("지하실로 내려갑니다...", "system"); changeMap('basement', 200, 120); }
+                  else log("굳게 잠겨있다. 열쇠가 필요하다.");
+              }
+            },
+            { id: 'frontDoor', x: 350, y: 460, w: 100, h: 40, color: '#2a2f3d', label: "현관문", condition: () => state.flags.foundTruth,
+              interact: () => { startDay2(); }
+            }
+        ],
+        day1_2F: [
+            { id: 'stairsDown', x: 50, y: 400, w: 60, h: 60, color: '#555555', label: "1층 계단", condition: () => true,
+              interact: () => { changeMap('livingRoom', 120, 400); log("1층 거실로 내려갑니다.", "system"); }
+            },
+            { id: 'desk', x: 600, y: 100, w: 100, h: 60, color: '#4a3b2c', label: "책상", condition: () => true,
+              interact: () => {
+                  if (!state.flags.foundNote) {
+                      state.flags.foundNote = true;
+                      log("서랍 안에서 핏자국이 묻은 메모를 발견했다.", "warning");
+                      log("메모: '아이들 소지품은 밑에. 열쇠는 1층 외투 안주머니에 둘 것.'", "system");
+                  } else { log("더 이상 쓸만한 단서는 없다."); }
+              }
+            }
+        ],
+        basement: [
+            { id: 'stairs', x: 80, y: 80, w: 80, h: 80, color: '#555555', label: "계단", condition: () => true,
+              interact: () => { changeMap('livingRoom', 650, 150); }
+            },
+            { id: 'boxes', x: 600, y: 350, w: 120, h: 80, color: '#4e342e', label: "나무 상자", condition: () => true,
+              interact: () => {
+                  if(!state.flags.foundTruth) {
+                      state.flags.foundTruth = true;
+                      log("상자 안에 실종된 아동들의 유골이 있다! 아서 켄트는 끔찍한 연쇄살인마였다.", "warning");
+                      log("누군가 이 살인마를 심판하고 시체를 1층에 전시하듯 조작해 둔 것이다.", "thought");
+                      log("[DAY 1 완료] 현관문으로 나가 수사를 마감하십시오.", "system");
+                  }
+              }
+            }
+        ],
+        // --- Day 2 (2일차) ---
+        mansion: [
+            { id: 'guard', x: 150, y: 350, w: 60, h: 40, color: '#2b2b2b', label: "경호원 시체", condition: () => true,
+              interact: () => { if(!state.flags.examinedGuard) { state.flags.examinedGuard = true; log("집주인을 지키던 경호원이다. 목이 깔끔하게 베여있다. 망설임 없는 프로의 솜씨다.", "warning"); } }
+            },
+            { id: 'bloodTrail2', x: 350, y: 250, w: 100, h: 40, color: '#8b0000', label: "끌려간 혈흔", condition: () => state.flags.examinedGuard,
+              interact: () => { if(!state.flags.examinedBloodMap2) { state.flags.examinedBloodMap2 = true; log("피가 저택 안쪽에서부터 질질 끌려간 흔적. 집주인은 산 채로 납치되었다.", "warning"); } }
+            },
+            { id: 'casing', x: 450, y: 350, w: 20, h: 20, color: '#ffd700', label: "탄피", condition: () => state.flags.examinedBloodMap2,
+              interact: () => {
+                  if(!state.flags.foundCasing) {
+                      state.flags.foundCasing = true;
+                      log("핏자국 옆에서 특수 개조된 총기의 탄피를 발견했다. 납치를 벌이며 이런 장비를 쓰는 놈들... 조직적인 범죄다.", "warning");
+                      addClue("개조 총기의 탄피");
+                      state.flags.day2Cleared = true;
+                  }
+              }
+            },
+            { id: 'exitMansion', x: 350, y: 460, w: 100, h: 40, color: '#2a2f3d', label: "저택 출구", condition: () => state.flags.day2Cleared,
+              interact: () => { startDay3(); }
+            }
+        ],
+        // --- Day 3 (3일차) ---
+        factory1F: [
+            { id: 'bloodTrail', x: 150, y: 400, w: 80, h: 40, color: '#6a0000', label: "핏자국", condition: () => true,
+              interact: () => {
+                  if(!state.flags.examinedBloodTrail) {
+                      state.flags.examinedBloodTrail = true;
+                      log("방금 전까지 누군가 피를 흘리며 공장 안쪽으로 기어간 자국이다.", "warning");
+                  }
+              }
+            },
+            { id: 'cages', x: 650, y: 80, w: 100, h: 100, color: '#4a4a4a', label: "대형 철창", condition: () => state.flags.examinedBloodTrail,
+              interact: () => {
+                  if(!state.flags.examinedCages) {
+                      state.flags.examinedCages = true;
+                      log("거대한 철창들이 늘어서 있다. 안에 사람은 없지만, 역겨운 피비린내가 진동한다.", "thought");
+                      log("2일차 저택을 습격해 집주인을 납치해간 그 강도단의 은신처가 확실하다.", "system");
+                  }
+              }
+            },
+            { id: 'stairsToB1', x: 650, y: 400, w: 60, h: 60, color: '#222', label: "지하 계단", condition: () => true,
+              interact: () => {
+                  if(state.flags.examinedCages) { changeMap('factoryB1', 150, 80); log("음산한 기운이 풍기는 지하 도축장으로 내려갑니다...", "system"); }
+                  else { log("이곳을 더 조사해 봐야 지하로 갈 단서를 찾을 수 있을 것 같다.", "thought"); }
+              }
+            }
+        ],
+        factoryB1: [
+            { id: 'stairsTo1F', x: 50, y: 50, w: 60, h: 60, color: '#222', label: "1층 계단", condition: () => true,
+              interact: () => { changeMap('factory1F', 580, 400); }
+            },
+            { id: 'ledger', x: 100, y: 400, w: 50, h: 40, color: '#d2b48c', label: "장부", condition: () => true,
+              interact: () => {
+                  if(!state.flags.examinedLedger) {
+                      state.flags.examinedLedger = true;
+                      log("납치한 사람들의 장기를 부위별로 누구에게 팔아넘겼는지 적어둔 장부다. 밀매 조직이군.", "warning");
+                  }
+              }
+            },
+            { id: 'icebox', x: 650, y: 100, w: 70, h: 50, color: '#e0f7fa', label: "아이스박스", condition: () => state.flags.examinedLedger,
+              interact: () => {
+                  if(!state.flags.examinedIcebox) {
+                      state.flags.examinedIcebox = true;
+                      log("아이스박스 안에 방금 적출된 신장과 심장이 있다.", "warning");
+                  }
+              }
+            },
+            { id: 'killerBody', x: 650, y: 350, w: 90, h: 50, color: '#5a0000', label: "조직 보스 시체", condition: () => state.flags.examinedIcebox,
+              interact: () => {
+                  if(!state.flags.examinedKiller) {
+                      state.flags.examinedKiller = true;
+                      log("장기 밀매 조직의 보스... 즉 2일차 저택의 집주인이 쓰러져 있다.", "system");
+                      log("배가 끔찍하게 갈라져 있고, 역으로 자신의 장기가 적출된 채 죽어있다.", "warning");
+                      log("시체의 양 눈이 완벽하게 감겨 있고, 두 손은 배 위에 정확히 90도로 겹쳐져 있다.", "warning");
+                      log("1일차 아서 켄트의 살인 현장과 완전히 똑같은 '의식'이다! 동일범의 소행이다.", "thought");
+                      addClue("동일범의 서명 (90도로 포갠 손)");
+                      state.flags.day3Cleared = true;
+                      log("[DAY 3 완료] 도축장 중앙 출구로 나가 4일차로 이동하십시오.", "system");
+                  }
+              }
+            },
+            { id: 'exitFactory', x: 350, y: 460, w: 100, h: 40, color: '#1a4d2e', label: "비상구", condition: () => state.flags.day3Cleared,
+              interact: () => { startDay4(); }
+            }
+        ],
+        // --- Day 4 (4일차) ---
+        fakeScene: [
+            { id: 'fakeBody', x: 350, y: 250, w: 90, h: 50, color: '#660000', label: "가짜 시체", condition: () => true,
+              interact: () => {
+                  if(!state.flags.examinedFakeBody) {
+                      state.flags.examinedFakeBody = true;
+                      log("정부의 의뢰를 받고 온 현장이다. 그런데 피의 점성이나 냄새가... 진짜 피가 아니다?", "warning");
+                  }
+              }
+            },
+            { id: 'witness', x: 100, y: 150, w: 40, h: 40, color: '#a0a0a0', label: "목격자(복제인간)", condition: () => state.flags.examinedFakeBody,
+              interact: () => {
+                  if(!state.flags.examinedWitness) {
+                      state.flags.examinedWitness = true;
+                      log("목격자의 증언이 마치 녹음기를 튼 것처럼 로봇같이 완벽하다. 위화감이 든다.", "thought");
+                      state.flags.foundHiddenDoor = true;
+                      log("방 구석의 벽이 조금 어색하게 들떠있는 것을 발견했다.", "system");
+                  }
+              }
+            },
+            { id: 'hiddenDoor', x: 720, y: 100, w: 50, h: 90, color: '#111', label: "비밀 통로", condition: () => state.flags.foundHiddenDoor,
+              interact: () => { changeMap('lab', 400, 450); log("벽 뒤에 숨겨진 거대한 엘리베이터를 타고 지하 시설로 내려갑니다...", "system"); }
+            }
+        ],
+        lab: [
+            { id: 'clones', x: 200, y: 150, w: 400, h: 100, color: '#003366', label: "배양 캡슐", condition: () => true,
+              interact: () => { if(!state.flags.foundClones) { state.flags.foundClones = true; triggerEndingSequence(); } }
+            }
+        ]
+    };
+
+    function changeMap(mapName, spawnX, spawnY) {
+        state.currentMap = mapName; player.x = spawnX; player.y = spawnY; playSound(400, 'triangle');
+    }
+    
+    function startDay2() {
+        changeMap('mansion', 400, 450);
+        log("----------------------------------------", "system");
+        log("[DAY 2] 외부 의뢰 (부유층 저택 습격 사건)", "log-day");
+        log("현장에 도착했다. 사설 경호원이 배치된 삼엄한 저택이 털렸다.", "system");
+    }
+    
+    function startDay3() {
+        changeMap('factory1F', 400, 450);
+        log("----------------------------------------", "system");
+        log("[DAY 3] 추적 끝의 지옥 (버려진 도축장)", "log-day");
+        log("탄피와 핏자국을 추적해 2일차 강도단의 은신처로 보이는 외곽 공장에 도착했다. 맵이 꽤 넓다.", "system");
+    }
+    
+    function startDay4() {
+        changeMap('fakeScene', 400, 450);
+        log("----------------------------------------", "system");
+        log("[DAY 4] 완벽한 목격자 (정부 기관 의뢰)", "log-day");
+        log("최근 연쇄살인마를 잡기 위해 정부 기관이 직접 나를 호출했다.", "system");
+    }
+
+    let audioCtx;
+    function startGame() {
+        if(isGameRunning) return;
+        document.getElementById('overlay').style.display = 'none';
+        isGameRunning = true;
+        
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        playSound(200, 'square'); 
+        setTimeout(() => playSound(100, 'sawtooth', 0.5), 500); 
+
+        const bufferSize = audioCtx.sampleRate * 2;
+        const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+        const noiseSource = audioCtx.createBufferSource();
+        noiseSource.buffer = noiseBuffer;
+        noiseSource.loop = true;
+        const filter = audioCtx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 500; 
+        const gainNode = audioCtx.createGain(); gainNode.gain.value = 0.2;
+        noiseSource.connect(filter).connect(gainNode).connect(audioCtx.destination);
+        noiseSource.start();
+
+        log("[DAY 1] 아서 켄트 자택", "log-day");
+        log("눈을 떴다. 머리가 쪼개질 듯 아프다... 필름이 끊겼었다.");
+        log("거실 바닥에 평판이 좋던 아서 켄트가 살해당해 있다. 조사를 시작하자.");
+        gameLoop();
+    }
+
+    function triggerEndingSequence() {
+        log("수많은 배양 캡슐 안에 방금 위에서 본 '목격자'들과 똑같이 생긴 복제인간들이 잠들어 있다...", "warning");
+        log("이 모든 현장... 가짜다. 복제인간을 이용해 완벽하게 세팅된 덫이다.", "thought");
+        
+        setTimeout(() => { log("그렇다면 정부는 대체 누구를 잡기 위해 이런 미친 덫을...?", "thought"); }, 2000);
+        setTimeout(() => { log("...정부가 나를 잡기 위해 판을 짰구나!", "warning"); }, 4000);
+        
+        setTimeout(() => {
+            playSound(100, 'sawtooth', 1.0); 
+            isGameRunning = false;
+            document.getElementById('ending-screen').style.display = 'flex';
+            
+            let html = "<div style='color:#fff; font-size:18px; text-align:center; line-height:2; margin-bottom: 40px;'>";
+            html += "<p style='animation: fadeIn 1s 1s forwards; opacity:0;'>[플래시백 재생]</p>";
+            html += "<p style='animation: fadeIn 1s 3s forwards; opacity:0; color:#ff3e3e;'>이성을 잃고 광기에 차 아서 켄트를 찢어 죽이던 나의 모습...</p>";
+            html += "<p style='animation: fadeIn 1s 5s forwards; opacity:0; color:#ff3e3e;'>장기 밀매 보스의 배를 가르고 장기를 파내던 나의 모습...</p>";
+            html += "<p style='animation: fadeIn 1s 7s forwards; opacity:0;'>피를 뒤집어쓴 채, 기계적인 움직임으로 시체의 손을 90도로 포개고 눈을 감긴다.</p>";
+            html += "<p style='animation: fadeIn 1s 9s forwards; opacity:0;'>모든 조작을 끝내고 시체 앞 바닥에 누워 스르륵 눈을 감는... 나.</p>";
+            html += "<p style='animation: fadeIn 1s 11s forwards; opacity:0; font-weight:bold;'>내가 수사했던 모든 사건의 범인은, 바로 '나'였다.</p>";
+            html += "</div>";
+            html += "<div class='final-title' style='animation-delay: 14s; opacity:0;'>기록된 충동 (The End)</div>";
+            
+            document.getElementById('ending-screen').innerHTML = html;
+            
+            setTimeout(() => { playSound(200, 'square'); }, 13000);
+            setTimeout(() => { playSound(100, 'sawtooth', 0.5); }, 13500);
+        }, 6000);
+    }
+
+    function playSound(freq, type, duration = 0.3) {
+        if(!audioCtx) return;
+        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+        osc.type = type; osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+        osc.connect(gain).connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + duration);
+    }
+
+    function log(text, type = 'normal') {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`; entry.innerText = text;
+        dialogBox.appendChild(entry); dialogBox.scrollTop = dialogBox.scrollHeight;
+    }
+    
+    function addClue(title) {
+        if (!state.clues.includes(title)) {
+            state.clues.push(title);
+            const list = document.getElementById('clue-list');
+            const li = document.createElement('li');
+            li.className = 'clue-item'; li.innerText = title;
+            list.appendChild(li); playSound(800, 'square');
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'ArrowUp') keys.ArrowUp = true;
+        if (e.code === 'ArrowDown') keys.ArrowDown = true;
+        if (e.code === 'ArrowLeft') keys.ArrowLeft = true;
+        if (e.code === 'ArrowRight') keys.ArrowRight = true;
+        if (e.code === 'Space' && !spacePressed) { keys.Space = true; spacePressed = true; checkInteraction(); }
+    });
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'ArrowUp') keys.ArrowUp = false;
+        if (e.code === 'ArrowDown') keys.ArrowDown = false;
+        if (e.code === 'ArrowLeft') keys.ArrowLeft = false;
+        if (e.code === 'ArrowRight') keys.ArrowRight = false;
+        if (e.code === 'Space') { keys.Space = false; spacePressed = false; }
+    });
+
+    function checkCollision(nx, ny) {
+        if (nx < 0 || ny < 0 || nx + player.w > canvas.width || ny + player.h > canvas.height) return true;
+        const currentObjects = maps[state.currentMap].filter(obj => obj.condition());
+        for (let obj of currentObjects) {
+            if (nx < obj.x + obj.w && nx + player.w > obj.x && ny < obj.y + obj.h && ny + player.h > obj.y) return true;
+        }
+        return false;
+    }
+
+    function checkInteraction() {
+        const range = 20;
+        const currentObjects = maps[state.currentMap].filter(obj => obj.condition());
+        for (let obj of currentObjects) {
+            if (player.x - range < obj.x + obj.w && player.x + player.w + range > obj.x &&
+                player.y - range < obj.y + obj.h && player.y + player.h + range > obj.y) {
+                playSound(600, 'sine'); obj.interact(); return; 
+            }
+        }
+    }
+
+    function update() {
+        let nx = player.x, ny = player.y;
+        if (keys.ArrowUp) ny -= player.speed;
+        if (keys.ArrowDown) ny += player.speed;
+        if (keys.ArrowLeft) nx -= player.speed;
+        if (keys.ArrowRight) nx += player.speed;
+        if (!checkCollision(nx, player.y)) player.x = nx;
+        if (!checkCollision(player.x, ny)) player.y = ny;
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+        for (let i = 0; i < canvas.width; i += 50) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
+        for (let i = 0; i < canvas.height; i += 50) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke(); }
+
+        const currentObjects = maps[state.currentMap].filter(obj => obj.condition());
+        currentObjects.forEach(obj => {
+            ctx.fillStyle = obj.color; ctx.fillRect(obj.x, obj.y, obj.w, obj.h);
+            ctx.strokeStyle = '#fff'; ctx.strokeRect(obj.x, obj.y, obj.w, obj.h);
+        });
+
+        ctx.fillStyle = player.color; ctx.fillRect(player.x, player.y, player.w, player.h);
+        ctx.fillStyle = '#fff'; ctx.fillRect(player.x + 8, player.y + 4, 8, 8);
+
+        const maskCanvas = document.createElement('canvas');
+        maskCanvas.width = canvas.width; maskCanvas.height = canvas.height;
+        const maskCtx = maskCanvas.getContext('2d');
+        
+        if (state.currentMap === 'factory1F' || state.currentMap === 'factoryB1') maskCtx.fillStyle = 'rgba(20, 0, 0, 0.95)';
+        else if (state.currentMap === 'lab') maskCtx.fillStyle = 'rgba(0, 10, 30, 0.9)';
+        else maskCtx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        maskCtx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        maskCtx.globalCompositeOperation = 'destination-out';
+        const gradient = maskCtx.createRadialGradient(
+            player.x + player.w/2, player.y + player.h/2, 30, 
+            player.x + player.w/2, player.y + player.h/2, 220
+        );
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        maskCtx.fillStyle = gradient;
+        maskCtx.beginPath(); maskCtx.arc(player.x + player.w/2, player.y + player.h/2, 220, 0, Math.PI * 2); maskCtx.fill();
+        ctx.drawImage(maskCanvas, 0, 0);
+
+        const range = 20;
+        currentObjects.forEach(obj => {
+            if (player.x - range < obj.x + obj.w && player.x + player.w + range > obj.x &&
+                player.y - range < obj.y + obj.h && player.y + player.h + range > obj.y) {
+                ctx.fillStyle = '#00f0ff'; ctx.font = '14px Courier New';
+                ctx.fillText("[Space] 상호작용", player.x - 15, player.y - 15);
+            }
+        });
+    }
+
+    function gameLoop() {
+        if(!isGameRunning) return;
+        update(); draw(); requestAnimationFrame(gameLoop);
+    }
+</script>
+</body>
+</html>
