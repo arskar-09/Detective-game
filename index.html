@@ -22,7 +22,8 @@
         #controls-info { margin-top: auto; background: #161922; padding: 10px; font-size: 12px; color: #8a94a6; border-radius: 4px; }
         .key-badge { background: #2a2f3d; color: #fff; padding: 2px 6px; border-radius: 3px; font-weight: bold; }
         
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 100; display: flex; justify-content: center; align-items: center; flex-direction: column; cursor: pointer; transition: opacity 1s; }
+        #overlay, #transition-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,1); z-index: 100; display: flex; justify-content: center; align-items: center; flex-direction: column; cursor: pointer; transition: opacity 1s; }
+        #transition-screen { z-index: 150; display: none; opacity: 0; pointer-events: none; }
         .title-text { font-size: 24px; color: #ff3e3e; margin-bottom: 20px; text-align: center; }
         .desc-text { font-size: 14px; color: #8a94a6; animation: blink 1.5s infinite; }
         
@@ -46,6 +47,10 @@
         <div class="desc-text">화면을 클릭하여 수사를 시작하십시오.</div>
     </div>
     
+    <div id="transition-screen">
+        <div class="final-title" id="transition-text">DAY X</div>
+    </div>
+
     <div id="game-container">
         <canvas id="gameCanvas" width="800" height="500"></canvas>
         <div id="dialog-box"></div>
@@ -73,15 +78,19 @@
     const state = {
         currentMap: 'livingRoom', clues: [],
         flags: {
+            // Day 1
             examinedBody: false, foundNote: false, foundKey: false, foundTruth: false,
-            examinedGuard: false, examinedBloodMap2: false, foundCasing: false, day2Cleared: false,
+            // Day 2
+            examinedYard: false, examinedGuard: false, examinedBloodMap2: false, foundCasing: false, day2Cleared: false,
+            // Day 3
             examinedBloodTrail: false, examinedCages: false, examinedLedger: false, examinedIcebox: false, examinedKiller: false, day3Cleared: false,
+            // Day 4
             examinedFakeBody: false, examinedWitness: false, foundHiddenDoor: false, foundClones: false
         }
     };
 
     const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, Space: false };
-    let spacePressed = false, isGameRunning = false;
+    let spacePressed = false, isGameRunning = false, frameCount = 0;
     const player = { x: 350, y: 350, w: 24, h: 32, speed: 5, color: '#00f0ff' };
 
     const maps = {
@@ -109,7 +118,7 @@
               }
             },
             { id: 'frontDoor', x: 350, y: 460, w: 100, h: 40, color: '#2a2f3d', label: "현관문", condition: () => state.flags.foundTruth,
-              interact: () => { startDay2(); }
+              interact: () => { triggerTransition("DAY 2", startDay2); }
             }
         ],
         day1_2F: [
@@ -141,26 +150,53 @@
               }
             }
         ],
-        // --- Day 2 (2일차) ---
-        mansion: [
-            { id: 'guard', x: 150, y: 350, w: 60, h: 40, color: '#2b2b2b', label: "경호원 시체", condition: () => true,
+        // --- Day 2 (2일차 - 확장됨) ---
+        mansionYard: [
+            { id: 'startGate', x: 350, y: 450, w: 100, h: 50, color: '#1a1c23', label: "정문", condition: () => true,
+              interact: () => {
+                  if(!state.flags.examinedYard) { state.flags.examinedYard = true; log("보안 시스템이 완전히 박살나 있다. 안으로 들어가자.", "thought"); }
+              }
+            },
+            { id: 'mansionDoor', x: 350, y: 50, w: 100, h: 50, color: '#4e3a24', label: "저택 입구", condition: () => true,
+              interact: () => { changeMap('mansion1F', 380, 400); log("저택 1층 로비로 진입합니다.", "system"); }
+            }
+        ],
+        mansion1F: [
+            { id: 'exitYard', x: 350, y: 460, w: 100, h: 40, color: '#4e3a24', label: "정원 출구", condition: () => true,
+              interact: () => { changeMap('mansionYard', 380, 120); }
+            },
+            { id: 'guard', x: 150, y: 250, w: 60, h: 40, color: '#2b2b2b', label: "경호원 시체", condition: () => true,
               interact: () => { if(!state.flags.examinedGuard) { state.flags.examinedGuard = true; log("집주인을 지키던 경호원이다. 목이 깔끔하게 베여있다. 망설임 없는 프로의 솜씨다.", "warning"); } }
             },
-            { id: 'bloodTrail2', x: 350, y: 250, w: 100, h: 40, color: '#8b0000', label: "끌려간 혈흔", condition: () => state.flags.examinedGuard,
-              interact: () => { if(!state.flags.examinedBloodMap2) { state.flags.examinedBloodMap2 = true; log("피가 저택 안쪽에서부터 질질 끌려간 흔적. 집주인은 산 채로 납치되었다.", "warning"); } }
+            { id: 'bloodTrail1F', x: 450, y: 200, w: 50, h: 100, color: '#8b0000', label: "핏자국", condition: () => state.flags.examinedGuard,
+              interact: () => { if(!state.flags.examinedBloodMap2) { state.flags.examinedBloodMap2 = true; log("피가 2층으로 질질 끌려간 흔적. 위에서 무슨 일이 있었다.", "warning"); } }
             },
-            { id: 'casing', x: 450, y: 350, w: 20, h: 20, color: '#ffd700', label: "탄피", condition: () => state.flags.examinedBloodMap2,
+            { id: 'stairsTo2F', x: 650, y: 100, w: 80, h: 80, color: '#555555', label: "2층 계단", condition: () => true,
+              interact: () => { changeMap('mansion2F', 650, 200); log("저택 2층 금고방으로 올라갑니다.", "system"); }
+            }
+        ],
+        mansion2F: [
+            { id: 'stairsTo1F', x: 650, y: 100, w: 80, h: 80, color: '#555555', label: "1층 계단", condition: () => true,
+              interact: () => { changeMap('mansion1F', 650, 200); }
+            },
+            { id: 'safeRoom', x: 100, y: 150, w: 120, h: 80, color: '#3d3d3d', label: "금고", condition: () => true,
+              interact: () => {
+                  log("거대한 금고가 털렸고, 집주인도 사라졌다. 핏자국이 여기서 창문 밖으로 이어진다.", "thought");
+              }
+            },
+            { id: 'casing', x: 300, y: 200, w: 20, h: 20, color: '#ffd700', label: "탄피", condition: () => state.flags.examinedBloodMap2,
               interact: () => {
                   if(!state.flags.foundCasing) {
                       state.flags.foundCasing = true;
-                      log("핏자국 옆에서 특수 개조된 총기의 탄피를 발견했다. 납치를 벌이며 이런 장비를 쓰는 놈들... 조직적인 범죄다.", "warning");
+                      log("금고 근처에서 특수 개조된 총기의 탄피를 발견했다. 납치를 벌이며 이런 장비를 쓰는 놈들... 거대한 조직이다.", "warning");
                       addClue("개조 총기의 탄피");
                       state.flags.day2Cleared = true;
+                      log("[DAY 2 완료] 1층 정문을 통해 빠져나가십시오.", "system");
                   }
               }
             },
-            { id: 'exitMansion', x: 350, y: 460, w: 100, h: 40, color: '#2a2f3d', label: "저택 출구", condition: () => state.flags.day2Cleared,
-              interact: () => { startDay3(); }
+            { id: 'exitDay2', x: 350, y: 460, w: 100, h: 40, color: '#1a1c23', label: "귀환", condition: () => state.flags.day2Cleared,
+              interact: () => { triggerTransition("DAY 3", startDay3); }
             }
         ],
         // --- Day 3 (3일차) ---
@@ -224,7 +260,7 @@
               }
             },
             { id: 'exitFactory', x: 350, y: 460, w: 100, h: 40, color: '#1a4d2e', label: "비상구", condition: () => state.flags.day3Cleared,
-              interact: () => { startDay4(); }
+              interact: () => { triggerTransition("DAY 4", startDay4); }
             }
         ],
         // --- Day 4 (4일차) ---
@@ -262,18 +298,48 @@
         state.currentMap = mapName; player.x = spawnX; player.y = spawnY; playSound(400, 'triangle');
     }
     
+    function triggerTransition(dayText, startFunc) {
+        isGameRunning = false;
+        const ts = document.getElementById('transition-screen');
+        const tsText = document.getElementById('transition-text');
+        tsText.innerText = dayText;
+        
+        ts.style.display = 'flex';
+        setTimeout(() => ts.style.opacity = '1', 50);
+
+        // 시계 초침 등 긴장감 조성 사운드 시뮬레이션
+        setTimeout(() => playSound(300, 'square', 0.1), 1000);
+        setTimeout(() => playSound(300, 'square', 0.1), 1500);
+        setTimeout(() => playSound(300, 'square', 0.1), 2000);
+        
+        setTimeout(() => {
+            playSound(200, 'square', 0.5); // 눈 뜨는 소리
+            setTimeout(() => playSound(100, 'sawtooth', 0.5), 200); // 쿵 소리
+            
+            startFunc();
+            
+            setTimeout(() => {
+                ts.style.opacity = '0';
+                setTimeout(() => {
+                    ts.style.display = 'none';
+                    isGameRunning = true;
+                }, 1000);
+            }, 800);
+        }, 3500);
+    }
+
     function startDay2() {
-        changeMap('mansion', 400, 450);
+        changeMap('mansionYard', 400, 380);
         log("----------------------------------------", "system");
         log("[DAY 2] 외부 의뢰 (부유층 저택 습격 사건)", "log-day");
-        log("현장에 도착했다. 사설 경호원이 배치된 삼엄한 저택이 털렸다.", "system");
+        log("현장에 도착했다. 사설 경호원이 배치된 삼엄한 저택이 털렸다. 정원부터 살펴보자.", "system");
     }
     
     function startDay3() {
         changeMap('factory1F', 400, 450);
         log("----------------------------------------", "system");
         log("[DAY 3] 추적 끝의 지옥 (버려진 도축장)", "log-day");
-        log("탄피와 핏자국을 추적해 2일차 강도단의 은신처로 보이는 외곽 공장에 도착했다. 맵이 꽤 넓다.", "system");
+        log("탄피와 핏자국을 추적해 2일차 강도단의 은신처로 보이는 외곽 공장에 도착했다.", "system");
     }
     
     function startDay4() {
@@ -287,12 +353,10 @@
     function startGame() {
         if(isGameRunning) return;
         document.getElementById('overlay').style.display = 'none';
-        isGameRunning = true;
         
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        playSound(200, 'square'); 
-        setTimeout(() => playSound(100, 'sawtooth', 0.5), 500); 
-
+        
+        // 배경 노이즈(비 내리는 소리)
         const bufferSize = audioCtx.sampleRate * 2;
         const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
         const output = noiseBuffer.getChannelData(0);
@@ -300,15 +364,18 @@
         const noiseSource = audioCtx.createBufferSource();
         noiseSource.buffer = noiseBuffer;
         noiseSource.loop = true;
-        const filter = audioCtx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 500; 
-        const gainNode = audioCtx.createGain(); gainNode.gain.value = 0.2;
+        const filter = audioCtx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 400; 
+        const gainNode = audioCtx.createGain(); gainNode.gain.value = 0.15;
         noiseSource.connect(filter).connect(gainNode).connect(audioCtx.destination);
         noiseSource.start();
 
-        log("[DAY 1] 아서 켄트 자택", "log-day");
-        log("눈을 떴다. 머리가 쪼개질 듯 아프다... 필름이 끊겼었다.");
-        log("거실 바닥에 평판이 좋던 아서 켄트가 살해당해 있다. 조사를 시작하자.");
-        gameLoop();
+        triggerTransition("DAY 1", () => {
+            log("[DAY 1] 아서 켄트 자택", "log-day");
+            log("눈을 떴다. 머리가 쪼개질 듯 아프다... 필름이 끊겼었다.");
+            log("거실 바닥에 평판이 좋던 아서 켄트가 살해당해 있다. 조사를 시작하자.");
+        });
+        
+        requestAnimationFrame(gameLoop);
     }
 
     function triggerEndingSequence() {
@@ -402,12 +469,20 @@
 
     function update() {
         let nx = player.x, ny = player.y;
-        if (keys.ArrowUp) ny -= player.speed;
-        if (keys.ArrowDown) ny += player.speed;
-        if (keys.ArrowLeft) nx -= player.speed;
-        if (keys.ArrowRight) nx += player.speed;
+        let isMoving = false;
+        
+        if (keys.ArrowUp) { ny -= player.speed; isMoving = true; }
+        if (keys.ArrowDown) { ny += player.speed; isMoving = true; }
+        if (keys.ArrowLeft) { nx -= player.speed; isMoving = true; }
+        if (keys.ArrowRight) { nx += player.speed; isMoving = true; }
+        
         if (!checkCollision(nx, player.y)) player.x = nx;
         if (!checkCollision(player.x, ny)) player.y = ny;
+
+        // 발소리 추가
+        if (isMoving && (nx !== player.x || ny !== player.y)) {
+            if (frameCount % 15 === 0) playSound(150, 'triangle', 0.05);
+        }
     }
 
     function draw() {
@@ -429,20 +504,26 @@
         maskCanvas.width = canvas.width; maskCanvas.height = canvas.height;
         const maskCtx = maskCanvas.getContext('2d');
         
-        if (state.currentMap === 'factory1F' || state.currentMap === 'factoryB1') maskCtx.fillStyle = 'rgba(20, 0, 0, 0.95)';
+        if (state.currentMap.includes('factory')) maskCtx.fillStyle = 'rgba(20, 0, 0, 0.95)';
         else if (state.currentMap === 'lab') maskCtx.fillStyle = 'rgba(0, 10, 30, 0.9)';
-        else maskCtx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        else maskCtx.fillStyle = 'rgba(0, 0, 0, 0.95)';
         maskCtx.fillRect(0, 0, canvas.width, canvas.height);
         
         maskCtx.globalCompositeOperation = 'destination-out';
+        
+        // 시야 깜빡임 (Flickering) 효과
+        const time = Date.now() / 150;
+        const flicker = Math.sin(time) * 5 + Math.random() * 3;
+        const radius = 220 + flicker;
+        
         const gradient = maskCtx.createRadialGradient(
             player.x + player.w/2, player.y + player.h/2, 30, 
-            player.x + player.w/2, player.y + player.h/2, 220
+            player.x + player.w/2, player.y + player.h/2, radius
         );
         gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
         gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
         maskCtx.fillStyle = gradient;
-        maskCtx.beginPath(); maskCtx.arc(player.x + player.w/2, player.y + player.h/2, 220, 0, Math.PI * 2); maskCtx.fill();
+        maskCtx.beginPath(); maskCtx.arc(player.x + player.w/2, player.y + player.h/2, radius, 0, Math.PI * 2); maskCtx.fill();
         ctx.drawImage(maskCanvas, 0, 0);
 
         const range = 20;
@@ -456,8 +537,10 @@
     }
 
     function gameLoop() {
-        if(!isGameRunning) return;
-        update(); draw(); requestAnimationFrame(gameLoop);
+        if(isGameRunning) {
+            update(); draw(); frameCount++;
+        }
+        requestAnimationFrame(gameLoop);
     }
 </script>
 </body>
